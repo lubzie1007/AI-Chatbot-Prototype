@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyMate – AI Assistant</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+
+    <aside class="hero">
+      <div class="hero-badge">AI Chatbot UI</div>
+      <div class="hero-pill">with loading animation</div>
+    </aside>
+
+    <main class="chat-card">
+      <header class="chat-header">
+        <div class="sparkle">✦</div>
+        <h1>Ask our AI anything</h1>
+      </header>
+
+      <div id="suggestions" class="suggestions">
+        <p class="suggestions-label">Suggestions on what to ask</p>
+        <div class="chips">
+          <button class="chip" data-msg="What can I ask you to do?">What can I ask you to do?</button>
+          <button class="chip" data-msg="Help me start my CV.">Help me start my CV</button>
+          <button class="chip" data-msg="What is NSFAS and how do I apply?">What is NSFAS?</button>
+        </div>
+      </div>
+
+      <form id="chat-form" class="composer">
+        <input id="input" type="text"
+               placeholder="Ask me anything about your studies..." autocomplete="off" />
+        <button type="submit" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+               stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    // Persist a stable session id per browser so we can list past chats later
+    const sessionId = localStorage.getItem('studymate_session')
+      || (() => {
+           const id = crypto.randomUUID();
+           localStorage.setItem('studymate_session', id);
+           return id;
+         })();
+
+    async function startConversation(message) {
+      const res = await fetch('/api/chat/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, message })
+      });
+      const data = await res.json();
+      // Send the first user message in the new conversation, then navigate
+      await fetch(`/api/chat/${data.conversationId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message })
+      });
+      window.location.href = `chat.html?c=${data.conversationId}`;
+    }
+
+    document.getElementById('chat-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const t = document.getElementById('input').value.trim();
+      if (t) startConversation(t);
+    });
+
+    document.querySelectorAll('.chip').forEach(chip =>
+      chip.addEventListener('click', () => startConversation(chip.dataset.msg)));
+  </script>
+</body>
+</html>

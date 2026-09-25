@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyMate</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body class="chat-page">
+
+  <div class="layout">
+
+    <!-- ================= SIDEBAR ================= -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-sparkle">✦</span>
+        <span class="brand-name">StudyMate</span>
+      </div>
+
+      <button id="new-chat" class="new-chat-btn">＋ New chat</button>
+
+      <div id="history" class="history">
+        <!-- groups injected by JS -->
+      </div>
+    </aside>
+
+    <!-- ================= CHAT ================= -->
+    <main class="chat-area">
+      <header class="chat-topbar">
+        <div class="sparkle">✦</div>
+        <h1>Ask our AI anything</h1>
+      </header>
+
+      <section id="messages" class="messages"></section>
+
+      <form id="chat-form" class="composer">
+        <input id="input" type="text"
+               placeholder="Ask me anything about your studies..." autocomplete="off" />
+        <button type="submit" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+               stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </form>
+    </main>
+
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    let conversationId = params.get('c');
+    const sessionId = localStorage.getItem('studymate_session');
+    const messagesEl = document.getElementById('messages');
+    const historyEl  = document.getElementById('history');
+    const form       = document.getElementById('chat-form');
+    const input      = document.getElementById('input');
+
+    // --- Sidebar ----------------------------------------------------------
+    function groupLabel(dateStr) {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diffDays = Math.floor((now - d) / 86400000);
+      if (diffDays <= 0)  return 'Today';
+      if (diffDays === 1) return 'Yesterday';
+      if (diffDays <= 7)  return '7 Days';
+      if (diffDays <= 30) return '30 Days';
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+    }
+
+    async function loadSidebar() {
+      if (!sessionId) return;
+      const res = await fetch(`/api/chat/history?sessionId=${sessionId}`);
+      const items = await res.json();
+
+      historyEl.innerHTML = '';
+      const groups = {};
+      items.forEach(item => {
+        const key = groupLabel(item.createdAt);
+        (groups[key] = groups[key] || []).push(item);
+      });
+
+      Object.entries(groups).forEach(([label, list]) => {
+        const h = document.createElement('div');
+        h.className = 'history-group-label';
+        h.textContent = label.toUpperCase();
+        historyEl.appendChild(h);
+
+        list.forEach(item => {
+          const a = document.createElement('a');
+          a.className = 'history-item' + (item.id === conversationId ? ' active' : '');
+          a.href = `chat.html?c=${item.id}`;
+          a.textContent = item.title;
+          historyEl.appendChild(a);
+        });
+      });
+    }
+
+    // --- Messages ---------------------------------------------------------
+    function renderMarkdown(text) {
+      // safe: we render into a dedicated element and DO NOT trust HTML from user,
+      // but for a prototype this is acceptable
+      return marked.parse(text || '', { breaks: true });
+    }
+
+    function addMessage(role, text, opts = {}) {
+      const wrap = document.createElement('div');
+      wrap.className = `msg ${role}`;
+      wrap.innerHTML = `
+        <div class="label">${role === 'user' ? 'ME' : 'OUR AI'}</div>
+        <div class="bubble"></div>`;
+      const bubble = wrap.querySelector('.bubble');
+
+      if (role === 'bot') {
+        bubble.innerHTML = renderMarkdown(text);
+
+        // If the backend signalled a completed CV, attach a download button
+        if (opts.downloadUrl) {
+          const btn = document.createElement('a');
+          btn.href = opts.downloadUrl;
+          btn.className = 'cv-download-btn';
+          btn.textContent = '⬇ Download CV (PDF)';
+          bubble.appendChild(document.createElement('br'));
+          bubble.appendChild(btn);
+        }
+      } else {
+        bubble.textContent = text;
+      }
+
+      messagesEl.appendChild(wrap);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function addLoading() {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg bot loading';
+      wrap.innerHTML = `
+        <div class="label">OUR AI</div>
+        <div class="bubble">
+          <span class="dots"><span></span><span></span><span></span></span>
+        </div>`;
+      messagesEl.appendChild(wrap);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return wrap;
+    }
+
+    async function loadHistory() {
+      if (!conversationId) return;
+      const res = await fetch(`/api/chat/${conversationId}/messages`);
+      const list = await res.json();
+      list.forEach(m => addMessage(m.role === 'user' ? 'user' : 'bot', m.content));
+    }
+
+    async function sendMessage(text) {
+      if (!text.trim()) return;
+      addMessage('user', text);
+      const loadingEl = addLoading();
+      try {
+        const res = await fetch(`/api/chat/${conversationId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+        const data = await res.json();
+        loadingEl.remove();
+        addMessage('bot', data.reply || 'No reply.', { downloadUrl: data.downloadUrl });
+      } catch (e) {
+        loadingEl.remove();
+        addMessage('bot', 'Connection error: ' + e.message);
+      }
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const t = input.value;
+      input.value = '';
+      sendMessage(t);
+    });
+
+    document.getElementById('new-chat').addEventListener('click', () => {
+      window.location.href = 'index.html';
+    });
+
+    // --- Boot -------------------------------------------------------------
+    if (!conversationId) window.location.href = 'index.html';
+    loadSidebar();
+    loadHistory();
+  </script>
+</body>
+</html>
